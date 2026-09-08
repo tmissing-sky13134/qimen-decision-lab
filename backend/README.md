@@ -11,6 +11,8 @@ Independent Fastify service for the Linux `zhouyi-divination` binary. It is desi
 
 The API accepts `POST /cast/qimen`, `/cast/zhouyi`, `/cast/liuren`, and `/cast/huican`. It passes only confirmed CLI options: `cast -m/-q/-t`, optional `--time`, `--lon` when true solar time is enabled, or `--no-truesolar` when it is disabled.
 
+The Linux image sets `LANG` and `LC_ALL` to `C.UTF-8`; Node passes arguments as an array and decodes stdout/stderr as UTF-8. In development only, the server logs the received question and the exact `-q` argument for diagnosis. Production never logs the question. `npm test` includes a conditional real-binary integration test: run it with `ZHOUYI_BIN_PATH` pointing to the Linux binary to prove that `--time` and UTF-8 work end to end.
+
 ## Railway
 
 1. Create a Railway service from this repository, setting the root directory to `backend`.

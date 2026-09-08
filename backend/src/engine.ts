@@ -5,11 +5,12 @@ export class EngineTimeoutError extends Error {}
 export class SpawnEngineRunner implements EngineRunner {
   run(binary: string, args: string[], timeoutMs: number): Promise<EngineRunResult> {
     return new Promise((resolve, reject) => {
-      const child = spawn(binary, args, { shell: false, windowsHide: true });
+      const child = spawn(binary, args, { shell: false, windowsHide: true, env: { ...process.env, LANG: "C.UTF-8", LC_ALL: "C.UTF-8" } });
       let stdout = ""; let stderr = ""; let timedOut = false;
+      child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
       const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, timeoutMs);
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+      child.stderr.on("data", (chunk: string) => { stderr += chunk; });
       child.on("error", (error) => { clearTimeout(timer); reject(error); });
       child.on("close", (exitCode) => { clearTimeout(timer); if (timedOut) reject(new EngineTimeoutError("Calculation engine timed out.")); else resolve({ stdout, stderr, exitCode: exitCode ?? 1 }); });
     });
