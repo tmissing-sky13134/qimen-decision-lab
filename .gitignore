@@ -4,4 +4,4 @@ node_modules/
 .env.local
 backend/node_modules/
 backend/dist/
-backend/bin/zhouyi-linux-amd64
+
