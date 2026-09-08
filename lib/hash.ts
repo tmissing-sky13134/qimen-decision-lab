@@ -1,0 +1,2 @@
+import type { CastRequest } from "@/lib/types";
+export function createChartHash(request: CastRequest) { const source = `${request.question.trim().toLowerCase()}|${request.castTime}|${request.location.trim().toLowerCase()}|${request.method}`; let hash = 2166136261; for (let i = 0; i < source.length; i++) { hash ^= source.charCodeAt(i); hash = Math.imul(hash, 16777619); } return `qdl_${(hash >>> 0).toString(16)}`; }

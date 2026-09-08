@@ -1,0 +1,23 @@
+import { access } from "node:fs/promises";
+import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
+import { z } from "zod";
+import { buildEngineArgs, EngineTimeoutError, SpawnEngineRunner } from "./engine.js";
+import { methods, type CastInput, type EngineRunner, type Method } from "./types.js";
+
+const questionTypes = ["decision", "career", "wealth", "relation", "health", "timing", "other"] as const;
+const inputSchema = z.object({ question: z.string().trim().min(1, "问题不能为空。").max(500, "问题不能超过 500 个字符。"), questionType: z.enum(questionTypes), datetime: z.string().datetime({ offset: true }).nullable().default(null), timezone: z.string().trim().min(1).max(100).default("Asia/Kuala_Lumpur"), city: z.string().trim().min(1).max(120).default("Kuala Lumpur"), longitude: z.number().finite().min(-180).max(180).default(101.6869), trueSolar: z.boolean().default(false) });
+
+export interface AppOptions { apiKey?: string; binaryPath?: string; engineVersion?: string; timeoutMs?: number; rateLimitMax?: number; runner?: EngineRunner; }
+const safeMessage = "排盘服务暂时不可用，请稍后重试。";
+
+export function buildApp(options: AppOptions = {}) {
+  const app = Fastify({ logger: true }); const apiKey = options.apiKey ?? process.env.CASTING_API_KEY ?? ""; const binaryPath = options.binaryPath ?? process.env.ZHOUYI_BIN_PATH ?? ""; const engineVersion = options.engineVersion ?? process.env.ZHOUYI_ENGINE_VERSION ?? "unknown"; const timeoutMs = options.timeoutMs ?? Number(process.env.CAST_TIMEOUT_MS ?? 15000); const runner = options.runner ?? new SpawnEngineRunner();
+  void app.register(rateLimit, { max: options.rateLimitMax ?? Number(process.env.RATE_LIMIT_MAX ?? 30), timeWindow: "1 minute", keyGenerator: (request) => request.ip });
+  app.addHook("onRequest", async (request, reply) => { if (!apiKey || request.method === "GET") return; const auth = request.headers.authorization; if (auth !== `Bearer ${apiKey}`) return reply.code(401).send({ success: false, error: { code: "UNAUTHORIZED", message: "未授权的排盘请求。" } }); });
+  app.get("/health", async () => { let engineAvailable = false; if (binaryPath) { try { await access(binaryPath); engineAvailable = true; } catch { engineAvailable = false; } } return { ok: true, engineAvailable, enginePath: process.env.NODE_ENV === "production" ? (engineAvailable ? "configured" : "unavailable") : binaryPath || "not configured", version: engineVersion }; });
+  app.post("/cast/:method", async (request, reply) => { const method = request.params as { method: string }; if (!methods.includes(method.method as Method)) return reply.code(400).send({ success: false, error: { code: "INVALID_METHOD", message: "不支持的术数方式。" } }); const parsed = inputSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_INPUT", message: "请求参数不正确。", details: parsed.error.flatten() } }); if (!binaryPath) return reply.code(503).send({ success: false, error: { code: "ENGINE_UNAVAILABLE", message: safeMessage } }); const input: CastInput = parsed.data; try { const result = await runner.run(binaryPath, buildEngineArgs(method.method as Method, input), timeoutMs); if (result.exitCode !== 0) return reply.code(502).send({ success: false, error: { code: "ENGINE_FAILED", message: safeMessage } }); let raw: Record<string, unknown>; try { raw = JSON.parse(result.stdout) as Record<string, unknown>; } catch { return reply.code(502).send({ success: false, error: { code: "MALFORMED_ENGINE_OUTPUT", message: safeMessage } }); } if (raw.ok !== true) return reply.code(502).send({ success: false, error: { code: "ENGINE_REJECTED", message: safeMessage } }); return { success: true, engine: "zhouyi-divination", method: method.method, castTime: typeof raw.time === "string" ? raw.time : input.datetime ?? new Date().toISOString(), summary: typeof raw.summary === "string" ? raw.summary : "排盘完成", raw: { engineResult: raw, requestedCivilDatetime: input.datetime, timezone: input.timezone, city: input.city, longitude: input.longitude, trueSolar: input.trueSolar }, prompt: typeof raw.prompt === "string" ? raw.prompt : "" }; } catch (error) { if (error instanceof EngineTimeoutError) return reply.code(504).send({ success: false, error: { code: "ENGINE_TIMEOUT", message: "排盘服务响应超时，请稍后重试。" } }); request.log.error(error); return reply.code(502).send({ success: false, error: { code: "ENGINE_EXECUTION_ERROR", message: safeMessage } }); } });
+  return app;
+}
+
+if (process.env.NODE_ENV !== "test") { const app = buildApp(); app.listen({ port: Number(process.env.PORT ?? 3001), host: "0.0.0.0" }).catch((error) => { app.log.error(error); process.exit(1); }); }
